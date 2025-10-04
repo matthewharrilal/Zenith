@@ -163,11 +163,15 @@ class GameEngine:
             # Display result
             self._display_action_result(agent.name, action_name, params, result)
             
-            # Store in memory
+            # Store in memory (normalize parameters first)
+            normalized_params = params.copy()
+            if action_name == "query" and "search" in normalized_params and "search_term" not in normalized_params:
+                normalized_params["search_term"] = normalized_params.pop("search")
+            
             self.memory.add_event(
                 actor=agent.name,
                 action=action_name,
-                params=params,
+                params=normalized_params,
                 result=result,
                 reasoning=reasoning
             )
@@ -178,9 +182,16 @@ class GameEngine:
     def _execute_primitive_action(self, agent: Agent, action_name: str, params: Dict) -> Dict[str, Any]:
         """Execute action through primitive tools with validation"""
         try:
-            primitive_func = getattr(self.primitives, action_name, None)
+            # Handle case-insensitive action names
+            action_name_lower = action_name.lower()
+            primitive_func = getattr(self.primitives, action_name_lower, None)
             if primitive_func:
-                return primitive_func(**params)
+                # Normalize parameter names for common issues
+                normalized_params = params.copy()
+                if action_name_lower == "query" and "search" in normalized_params and "search_term" not in normalized_params:
+                    normalized_params["search_term"] = normalized_params.pop("search")
+                
+                return primitive_func(**normalized_params)
             else:
                 return {"success": False, "error": f"Unknown action: {action_name}"}
         except Exception as e:
