@@ -14,24 +14,23 @@ class SimulationDisplay:
         self.key_events = []
         
     def display_round(self, round_num: int, timestamp: float, agents_data: List[Dict], game_state):
-        """Display round with balanced information"""
+        """Display round with clean, informative layout"""
         self.round = round_num
         
-        # Clean header with timestamp
+        # Clean header
         print(f"\n═══ Round {round_num} ═══ [{timestamp:.1f}s]")
         
-        # Three-column layout: Actions | Memory | Dynamics
-        self._display_main_panel(agents_data, game_state)
+        # Main action panel
+        self._display_actions(agents_data, game_state)
         
-        # Highlight key events only
+        # Show key events if any
         self._display_key_events(agents_data)
         
-    def _display_main_panel(self, agents_data: List[Dict], game_state):
-        """Main information panel with clean layout"""
+    def _display_actions(self, agents_data: List[Dict], game_state):
+        """Display agent actions in clean format"""
         
-        # Column 1: Agent Actions (simplified)
-        print("\n│ ACTIONS          │ MEMORY/PATTERNS     │ STATE")
-        print("├──────────────────┼────────────────────┼──────────────")
+        print("\n│ AGENT   │ ACTION        │ TARGET/INFO")
+        print("├─────────┼───────────────┼─────────────────")
         
         for agent in agents_data:
             name = agent['name']
@@ -43,21 +42,15 @@ class SimulationDisplay:
             
             # Format action display
             action_str = self._format_action(action, params)
+            target_str = self._format_target(action, params)
             
-            # Check for memory queries
-            memory_str = self._format_memory(action, params)
-            
-            # Get agent state
-            agent_entity = game_state.get_entity(name)
-            state_str = self._format_state(agent_entity)
-            
-            # Display in columns
-            print(f"│ {name:6} {action_str:9} │ {memory_str:18} │ {state_str}")
+            # Display in clean format
+            print(f"│ {name:7} │ {action_str:13} │ {target_str}")
         
-        print("└──────────────────┴────────────────────┴──────────────")
+        print("└─────────┴───────────────┴─────────────────")
     
     def _format_action(self, action: str, params: Dict) -> str:
-        """Format action concisely"""
+        """Format action with icon"""
         icons = {
             'observe': '👁',
             'signal': '💬',
@@ -72,77 +65,57 @@ class SimulationDisplay:
         }
         
         icon = icons.get(action, '•')
-        
-        # Add target for context-dependent actions
+        return f"{icon} {action}"
+    
+    def _format_target(self, action: str, params: Dict) -> str:
+        """Format target information"""
         if action == 'observe':
-            target = params.get('entity_id', '')[:3]
-            return f"{icon} {target}"
+            target = params.get('entity_id', 'unknown')
+            return f"→ {target}"
         elif action == 'signal':
-            target = params.get('target', 'all')[:3]
-            return f"{icon}→{target}"
+            target = params.get('target', 'all')
+            message = params.get('message', '')[:20]
+            return f"→ {target}: {message}..."
+        elif action == 'query':
+            mem_type = params.get('memory_type', 'events')
+            search = params.get('search_term', '')[:15]
+            return f"→ {mem_type}: {search}..."
+        elif action == 'receive':
+            time_window = params.get('time_window', 10.0)
+            return f"→ last {time_window:.0f}s"
         else:
-            return f"{icon} {action[:6]}"
+            return f"→ {action}"
     
-    def _format_memory(self, action: str, params: Dict) -> str:
-        """Format memory queries and patterns"""
-        if action == 'query':
-            mem_type = params.get('memory_type', '?')[:3]
-            search = params.get('search_term', '?')[:10]
-            return f"🔍{mem_type}:{search}"
-        elif action == 'store':
-            conf = params.get('confidence', 0)
-            return f"💾 conf:{conf:.1f}"
-        else:
-            return ""
-    
-    def _format_state(self, agent_entity: Optional[Dict]) -> str:
-        """Format agent state compactly"""
-        if not agent_entity:
-            return "?"
-        
-        health = agent_entity.get('health', 100)
-        resources = agent_entity.get('resources', 0)
-        
-        # Handle resources as list or number
-        if isinstance(resources, list):
-            resource_count = len(resources)
-        else:
-            resource_count = resources
-        
-        # Use indicators for changes
-        h_bar = "█" * (health // 20)  # 5-bar health
-        r_sym = "↑" if resource_count > 60 else "↓" if resource_count < 30 else "→"
-        
-        return f"H:{h_bar:5} R:{resource_count:02d}{r_sym}"
     
     def _display_key_events(self, agents_data: List[Dict]):
-        """Show only significant events"""
+        """Show significant events"""
         events = []
         
         for agent in agents_data:
             action = agent['action']
             name = agent['name']
+            params = agent.get('params', {})
             
             # Track significant actions
             if action == 'transfer':
-                to = agent['params'].get('to_entity', '?')
-                prop = agent['params'].get('property_name', '?')
+                to = params.get('to_entity', '?')
+                prop = params.get('property_name', '?')
                 events.append(f"{name}→{to}: shared {prop}")
             
             elif action == 'connect':
-                other = agent['params'].get('entity_b', '?')
-                strength = agent['params'].get('strength', 0)
+                other = params.get('entity_b', '?')
+                strength = params.get('strength', 0)
                 if abs(strength) > 0.5:
                     rel = "allied" if strength > 0 else "opposed"
                     events.append(f"{name} {rel} with {other}")
             
             elif action == 'signal':
-                msg = agent['params'].get('message', '')
-                if any(word in msg.lower() for word in ['cooperat', 'ally', 'help', 'attack']):
-                    events.append(f"{name}: \"{msg[:25]}...\"")
+                msg = params.get('message', '')
+                if any(word in msg.lower() for word in ['cooperat', 'ally', 'help', 'attack', 'escape']):
+                    events.append(f"{name}: \"{msg[:30]}...\"")
         
         if events:
-            print("\n» Key Events:", " | ".join(events[:2]))  # Max 2 events
+            print(f"\n» Key Events: {' | '.join(events[:2])}")
     
     def display_pattern_insight(self, every_n_rounds=5):
         """Show pattern insights periodically"""

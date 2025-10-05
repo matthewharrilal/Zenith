@@ -32,10 +32,14 @@ class Memory:
             'result': result, 
             'reasoning': reasoning,
             # Searchable text for vector similarity
-            'searchable_text': f"{actor} {action} {reasoning}"
+            'searchable_text': f"{actor} {action} {reasoning} {str(params)} {str(result)}"
         }
         self.events.append(event)
         self._update_vectors()  # Lazy vector update
+        
+        # Auto-detect patterns when enough events accumulate
+        if len(self.events) >= 5 and len(self.events) % 3 == 0:
+            self._auto_detect_patterns()
         
     def search_similar(self, query: str, top_k: int = 5) -> List[Dict]:
         """Vector similarity search - agents query this during reasoning"""
@@ -124,3 +128,53 @@ class Memory:
         """Update vectors when new events added"""
         if self.vectorizer is not None:
             self._initialize_vectors()  # Rebuild all vectors
+    
+    def _auto_detect_patterns(self):
+        """Automatically detect patterns from recent events"""
+        if len(self.events) < 5:
+            return
+        
+        # Get recent events
+        recent_events = self.events[-10:]  # Last 10 events
+        
+        # Detect cooperation patterns
+        cooperation_events = [e for e in recent_events if e['action'] in ['transfer', 'connect', 'signal']]
+        if len(cooperation_events) >= 3:
+            self.add_pattern(
+                name="Cooperation Emergence",
+                description="Agents are beginning to work together through communication and resource sharing",
+                confidence=0.7,
+                discoverer="system"
+            )
+        
+        # Detect exploration patterns
+        exploration_events = [e for e in recent_events if e['action'] in ['observe', 'query', 'detect']]
+        if len(exploration_events) >= 4:
+            self.add_pattern(
+                name="Information Gathering",
+                description="Agents are actively exploring and learning about their environment",
+                confidence=0.6,
+                discoverer="system"
+            )
+        
+        # Detect communication patterns
+        comm_events = [e for e in recent_events if e['action'] in ['signal', 'receive']]
+        if len(comm_events) >= 3:
+            unique_actors = len(set(e['actor'] for e in comm_events))
+            if unique_actors >= 2:
+                self.add_pattern(
+                    name="Communication Network",
+                    description="Multiple agents are engaging in information exchange",
+                    confidence=0.8,
+                    discoverer="system"
+                )
+        
+        # Detect tool diversity patterns
+        unique_actions = len(set(e['action'] for e in recent_events))
+        if unique_actions >= 5:
+            self.add_pattern(
+                name="Tool Diversity",
+                description="Agents are using a wide variety of capabilities, indicating adaptive behavior",
+                confidence=0.7,
+                discoverer="system"
+            )

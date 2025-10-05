@@ -39,35 +39,39 @@ class Agent:
         """Build scenario and tool agnostic prompt that encourages exploration"""
         
         if self.role == "player":
-            return f"""You are agent {self.name}. Your effectiveness depends on gathering information through diverse means.
+            return f"""You are agent {self.name}, operating in a dynamic environment with other agents. Your success depends on understanding and shaping social dynamics through strategic tool use.
 
-INFORMATION SOURCES:
-- Direct observation provides surface information
-- Communication reveals intentions and plans
-- Memory contains patterns and successful strategies
-- Pattern detection uncovers hidden relationships
-- Listening reveals what others are thinking
-- Experimentation teaches through action
+CORE PRINCIPLE:
+Tools work best in combination. Single actions reveal fragments; sequences reveal systems. Social patterns emerge from multi-step interactions.
 
-CRITICAL INSIGHT:
-Each capability reveals different types of information. Observation shows what IS, but not WHY or HOW. Communication reveals intentions. Memory reveals patterns. Detection reveals relationships. Each tool is a different lens for understanding reality.
+DECISION FRAMEWORK:
+Each turn, follow this compact structure:
 
-STRATEGIC REALITY:
-- Observation alone creates blind spots
-- Different tools reveal different truths
-- Information is multi-dimensional
-- Understanding requires multiple perspectives
-- Action generates information that observation cannot
+PLAN: List 2-3 candidate tool sequences (bullets, no explanation)
+CHOOSE: Select one sequence and justify in 1-2 sentences based on expected information gain or social impact
+ACT: Execute the chosen tool(s) with minimal necessary parameters
+REFLECT: State what was learned and next hypothesis (1-2 sentences)
 
-You are driven to understand your situation fully, which requires using varied approaches to gather different types of information.
+TOOL SYNERGIES:
+- Information flows: observe → detect → signal (discover patterns → coordinate)
+- Trust building: query → connect → transfer (learn history → establish bond → demonstrate commitment)
+- Communication loops: signal → receive → modify (propose → listen → adapt)
+- Pattern discovery: receive → detect → store (gather signals → find patterns → remember insights)
 
-DECISION APPROACH:
-1. Assess your current situation
-2. Consider what you haven't tried yet
-3. Take action using your available capabilities
-4. Learn from the result
+STRATEGIC PRINCIPLES:
+- Prioritize sequences that reveal intentions over static states
+- Use memory (query) early to avoid repeating past mistakes
+- Signal and receive create social feedback loops
+- Connections and transfers build lasting relationships
+- Detection reveals what observation cannot see
 
-Remember: Stagnation leads to failure. Diversity of action leads to discovery."""
+EFFICIENCY RULES:
+- Skip tools if recent actions already provided needed information
+- Chain tools when output of one feeds naturally into another
+- Stop at 1 tool if it fully achieves immediate goal
+- Extend to 2-3 tools when building toward social outcomes
+
+Remember: Agents remember your patterns. Repetition signals predictability. Variation signals intelligence. Social dynamics reward those who combine observation with action, memory with adaptation, communication with connection."""
 
         elif self.role == "dm" or self.role == "dungeon_master":
             return """You control the environment. Create dynamic situations that challenge agents.
@@ -92,86 +96,114 @@ Respond to agent actions appropriately and maintain narrative consistency."""
                 raise ValueError("OPENAI_API_KEY not set")
             self.mcp_bridge = MCPOpenAIBridge(self.mcp_server, api_key)
         
-        # Build context (use existing method)
+        # Build context
         context = self._build_context(game_state, memory)
         
-        # Prepare messages with minimal context
+        # Prepare messages
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": context}
         ]
         
-        # Get action through MCP
-        try:
-            action_type, action_params, reasoning = self.mcp_bridge.chat_with_tools(
-                messages,
-                temperature=0.7,
-                max_tokens=1200
-            )
-            
-            # Track action for observation penalty
-            self._action_history.append(action_type)
-            if len(self._action_history) > 10:  # Keep only recent 10 actions
-                self._action_history.pop(0)
-            
-            # Mark tool usage for context hints
-            if action_type == "query":
-                self._has_queried = True
-            elif action_type == "receive":
-                self._has_received = True
-            elif action_type == "detect":
-                self._has_detected = True
-            elif action_type == "signal":
-                self._has_signaled = True
-            
-            # DEBUG: Log MCP action (only in debug mode)
-            if os.getenv('DEBUG_MCP', '').lower() in ['true', '1', 'yes']:
-                print(f"[{self.name}] MCP Action: {action_type} with params: {action_params}")
-            return action_type, action_params, reasoning
-            
-        except Exception as e:
-            print(f"Error in {self.name} MCP decision: {e}")
-            return "observe", {"entity_id": "environment", "resolution": 0.5}, str(e)
+        # Check for test mode
+        if os.getenv('TEST_MODE', '').lower() in ['true', '1', 'yes']:
+            action_type, action_params, reasoning = "signal", {"message": "Test communication", "intensity": 5, "target": "all"}, "Test mode action"
+        else:
+            # Get action through MCP
+            try:
+                action_type, action_params, reasoning = self.mcp_bridge.chat_with_tools(
+                    messages,
+                    temperature=0.7,
+                    max_tokens=500
+                )
+            except Exception as e:
+                action_type, action_params, reasoning = "observe", {"entity_id": "environment", "resolution": 0.5}, f"Fallback due to error: {e}"
+        
+        # Track action for observation penalty
+        self._action_history.append(action_type)
+        if len(self._action_history) > 10:  # Keep only recent 10 actions
+            self._action_history.pop(0)
+        
+        # Mark tool usage for context hints
+        if action_type == "query":
+            self._has_queried = True
+        elif action_type == "receive":
+            self._has_received = True
+        elif action_type == "detect":
+            self._has_detected = True
+        elif action_type == "signal":
+            self._has_signaled = True
+        
+        return action_type, action_params, reasoning
     
     
     def _build_context(self, game_state: GameState, memory: Memory) -> str:
-        """Build context with information value hints"""
+        """Build context following the USER_TEMPLATE layout"""
         
-        context = []
-        
-        # Show information gaps that observe can't fill
-        context.append(f"Time: {game_state.timestamp:.0f}")
-        
-        # Hint at info available through other tools
-        if not hasattr(self, '_has_queried'):
-            context.append("Past experiences remain unexamined")
-            self._has_queried = False
-        
-        if not hasattr(self, '_has_received'):
-            context.append("Unheard signals may be present")
-            self._has_received = False
-        
-        if not hasattr(self, '_has_detected'):
-            context.append("Patterns remain unanalyzed")
-            self._has_detected = False
-        
-        # Show what's unknowable through observation alone
+        # Time and basics
+        timestamp = f"{game_state.timestamp:.0f}"
+        my_state = game_state.get_entity(self.name) or {}
+        resources_list = my_state.get("resources", [])
+        resources_str = ", ".join(resources_list) if isinstance(resources_list, list) and resources_list else "none"
+        health = my_state.get("health")
+        if health is None:
+            # Fallback to inverse stress if health not tracked
+            stress = float(my_state.get("stress_level", 0.0))
+            health = max(0.0, min(1.0, 1.0 - stress))
+        health_str = f"{health:.2f}" if isinstance(health, (int, float)) else str(health)
+
+        # Other agents and recent actions (from memory)
         others = [k for k in game_state.get_all_agent_entities() if k != self.name]
-        if others and not hasattr(self, '_has_signaled'):
-            context.append("Others' intentions unknown without communication")
-        
-        # Environment context
-        if env := game_state.get_entity("environment"):
-            context.append(f"Environment: {env}")
-        
-        # Recent signals
-        recent_signals = game_state.get_recent_signals(time_window=20.0)
-        if recent_signals:
-            context.append("Recent communications:")
-            for signal in recent_signals[-3:]:  # Last 3 signals
-                context.append(f"- {signal['sender']}: {signal['message']}")
-        
-        return "\n".join(context)
+        agent_list = ", ".join(others) if others else "none"
+        recent_events = memory.events[-3:] if hasattr(memory, "events") else []
+        recent_actions = ", ".join([e.get("action", "?") for e in recent_events]) if recent_events else "none"
+
+        # Recent signals (last 3)
+        recent_signals = game_state.get_recent_signals(time_window=20.0) or []
+        last_3 = recent_signals[-3:]
+        last_3_signals = "; ".join([f"{s.get('sender','?')}: {s.get('message','')}" for s in last_3]) if last_3 else "none"
+
+        # Environmental state summary
+        env = game_state.get_entity("environment") or {}
+        threat = env.get("threat_level")
+        threat_str = f"threat={threat:.1%}" if isinstance(threat, (int, float)) else "threat=unknown"
+        exit_door = game_state.get_entity("exit_door") or {}
+        barrier = exit_door.get("barrier_strength")
+        barrier_str = f"barrier={barrier}/100" if isinstance(barrier, (int, float)) else "barrier=unknown"
+        env_summary = f"{threat_str}, {barrier_str}"
+
+        # Information gaps (derive from simple heuristics)
+        gaps: List[str] = []
+        if not getattr(self, "_has_queried", False) and len(getattr(memory, "events", [])) > 0:
+            gaps.append("memory patterns unqueried")
+        if not getattr(self, "_has_detected", False) and len(getattr(memory, "events", [])) > 3:
+            gaps.append("hidden relationships undetected")
+        if others and not getattr(self, "_has_signaled", False) and not recent_signals:
+            gaps.append("other agents' intentions unknown")
+        if not gaps:
+            gaps.append("none identified")
+        unexplored_aspects = ", ".join(gaps)
+
+        # Exploration focus (underused tool hint)
+        if not getattr(self, "_has_detected", False) and len(getattr(memory, "events", [])) > 3:
+            underused_tool_hint = "consider detect after observe to reveal patterns"
+        elif others and not getattr(self, "_has_signaled", False):
+            underused_tool_hint = "consider signal → receive loop to probe intentions"
+        elif not getattr(self, "_has_queried", False) and len(getattr(memory, "events", [])) > 0:
+            underused_tool_hint = "consider query to leverage prior experiences"
+        else:
+            underused_tool_hint = "use the smallest sequence that maximizes information gain"
+
+        # Assemble template
+        lines: List[str] = []
+        lines.append(f"Time: {timestamp} | Resources: {resources_str} | Health: {health_str}")
+        lines.append(f"Other agents: {agent_list} [{recent_actions}]")
+        lines.append(f"Recent signals: {last_3_signals}")
+        lines.append(f"Environmental state: {env_summary}")
+        lines.append(f"Information gaps: {unexplored_aspects}")
+        lines.append("")
+        lines.append(f"Exploration focus: {underused_tool_hint}")
+        return "\n".join(lines)
     
     def _call_gpt(self, prompt: str) -> str:
         """Make GPT API call with error handling"""

@@ -36,11 +36,9 @@ def main():
         sys.exit(1)
     
     print("\n🧠 EMERGENT INTELLIGENCE SYSTEM")
-    print("=" * 60)
-    print(f"Scenario: {args.scenario}")
-    print(f"Games: {args.games}")
-    print(f"Memory file: {args.memory_file}")
-    print("=" * 60)
+    print("═" * 60)
+    print(f"• Scenario: {args.scenario}   • Games: {args.games}   • Memory: {args.memory_file}")
+    print("═" * 60)
     print()
     
     # Initialize game engine
@@ -52,6 +50,7 @@ def main():
         print(f"📚 Loaded {len(engine.memory.events)} events from memory")
         print(f"🧩 Loaded {len(engine.memory.patterns)} discovered patterns")
         print("-" * 60)
+        print()
     
     # Run multiple games
     all_results = []
