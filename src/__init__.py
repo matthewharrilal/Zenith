@@ -1,1 +1,0 @@
-# Emergent Intelligence System

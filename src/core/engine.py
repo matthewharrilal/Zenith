@@ -9,6 +9,7 @@ from .memory import Memory
 from .game_state import GameState
 from .primitives import PrimitiveTools
 from .agents import Agent, create_player_agent, create_dm_agent
+from .visual_display import SimulationDisplay
 
 class GameEngine:
     def __init__(self):
@@ -17,6 +18,8 @@ class GameEngine:
         self.agents: List[Agent] = []
         self.dm_agent: Optional[Agent] = None
         self.primitives: Optional[PrimitiveTools] = None
+        self.visualizer = SimulationDisplay()
+        self.round_number = 0
         
     def setup_scenario(self, scenario_name: str):
         """Initialize scenario - currently only safehouse"""
@@ -87,9 +90,125 @@ class GameEngine:
         print("Three agents wake up in a compromised safe house...")
         print("They must work together to escape before discovery.")
         print("-" * 50)
+    
+    def run_round(self):
+        """Run round with balanced display"""
         
-    def run_simulation(self, max_time: float = 500.0) -> Dict[str, Any]:
-        """Run event-driven simulation until natural stopping point"""
+        # Collect agent actions
+        agents_data = []
+        for agent in self.agents:
+            action, params, reasoning = agent.get_action(
+                self.game_state, self.memory, self.primitives  
+            )
+            
+            agents_data.append({
+                'name': agent.name,
+                'action': action,
+                'params': params,
+                'reasoning': reasoning
+            })
+            
+            # Execute action and store in memory
+            if action != "none":
+                result = self._execute_action(action, params, agent.name)
+                
+                # Store in memory
+                self.memory.add_event(
+                    actor=agent.name,
+                    action=action,
+                    params=params,
+                    result=result,
+                    reasoning=reasoning
+                )
+        
+        # Single display call
+        self.visualizer.display_round(
+            self.round_number,
+            self.game_state.timestamp,
+            agents_data,
+            self.game_state
+        )
+        
+        # Periodic insights
+        self.visualizer.display_pattern_insight()
+        
+        # Advance round
+        self.round_number += 1
+        self.game_state.timestamp += 1.0  # Simple time increment
+    
+    def _execute_action(self, action: str, params: Dict, agent_name: str):
+        """Execute a single action"""
+        try:
+            if action == "none":
+                return {"success": True, "result": {"message": "No action taken"}}
+            
+            # Use primitives to execute action
+            action_name_lower = action.lower()
+            primitive_func = getattr(self.primitives, action_name_lower, None)
+            if primitive_func:
+                # Normalize parameter names for common issues
+                normalized_params = params.copy()
+                if action_name_lower == "query" and "search" in normalized_params and "search_term" not in normalized_params:
+                    normalized_params["search_term"] = normalized_params.pop("search")
+                
+                return primitive_func(**normalized_params)
+            else:
+                return {"success": False, "error": f"Unknown action: {action}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        
+    def run_simulation(self, max_time: float = 500.0, use_balanced_display: bool = True) -> Dict[str, Any]:
+        """Run simulation with balanced display by default"""
+        
+        if use_balanced_display:
+            return self._run_balanced_simulation(max_time)
+        else:
+            return self._run_verbose_simulation(max_time)
+    
+    def _run_balanced_simulation(self, max_time: float = 500.0) -> Dict[str, Any]:
+        """Run simulation with clean balanced display"""
+        
+        start_time = time.time()
+        action_count = 0
+        max_rounds = 10  # Reasonable limit for demonstration
+        
+        print(f"🚀 Starting balanced simulation (max {max_rounds} rounds)...")
+        
+        while (self.round_number < max_rounds and 
+               self.game_state.timestamp < max_time and 
+               not self._natural_stopping_point() and
+               time.time() - start_time < 30):  # 30 second safety limit
+            
+            try:
+                # Run a round with balanced display
+                self.run_round()
+                action_count += 3  # Approximate actions per round
+                
+                # DM response occasionally
+                if self.round_number % 3 == 0 and self.dm_agent:
+                    self._execute_dm_response()
+                    action_count += 1
+                
+                # Environmental updates
+                self._update_environment()
+                
+                # Small delay for readability
+                time.sleep(0.1)
+                
+            except KeyboardInterrupt:
+                print("\n⏸️ Simulation interrupted by user")
+                break
+            except Exception as e:
+                print(f"\n❌ Error in round {self.round_number}: {e}")
+                break
+        
+        print(f"\n✅ Simulation completed after {self.round_number} rounds")
+        
+        # Analyze results
+        return self._analyze_game_results(action_count)
+    
+    def _run_verbose_simulation(self, max_time: float = 500.0) -> Dict[str, Any]:
+        """Run simulation with verbose display (legacy)"""
         
         start_time = time.time()
         action_count = 0
@@ -180,20 +299,38 @@ class GameEngine:
             print(f"Error executing {agent.name}'s turn: {e}")
     
     def _execute_primitive_action(self, agent: Agent, action_name: str, params: Dict) -> Dict[str, Any]:
-        """Execute action through primitive tools with validation"""
+        """Execute action through MCP system or primitive tools with validation"""
         try:
-            # Handle case-insensitive action names
-            action_name_lower = action_name.lower()
-            primitive_func = getattr(self.primitives, action_name_lower, None)
-            if primitive_func:
-                # Normalize parameter names for common issues
-                normalized_params = params.copy()
-                if action_name_lower == "query" and "search" in normalized_params and "search_term" not in normalized_params:
-                    normalized_params["search_term"] = normalized_params.pop("search")
+            # Handle "none" action gracefully
+            if action_name == "none":
+                return {"success": True, "result": {"message": "No action taken"}}
+            
+            # Use the agent's MCP system for execution if available
+            if hasattr(agent, 'mcp_server') and agent.mcp_server:
+                # Bind context to ensure primitives are available
+                agent.mcp_server.bind_context(self.game_state, self.memory, agent.name)
                 
-                return primitive_func(**normalized_params)
+                # Execute through MCP system (handles parameter filling automatically)
+                result = agent.mcp_server.execute_tool(action_name, params)
+                
+                # Extract the actual result from MCP response
+                if result.get("success"):
+                    return result.get("result", {})
+                else:
+                    return {"success": False, "error": result.get("error", "Unknown error")}
             else:
-                return {"success": False, "error": f"Unknown action: {action_name}"}
+                # Fallback to direct primitive call (for backward compatibility)
+                action_name_lower = action_name.lower()
+                primitive_func = getattr(self.primitives, action_name_lower, None)
+                if primitive_func:
+                    # Normalize parameter names for common issues
+                    normalized_params = params.copy()
+                    if action_name_lower == "query" and "search" in normalized_params and "search_term" not in normalized_params:
+                        normalized_params["search_term"] = normalized_params.pop("search")
+                    
+                    return primitive_func(**normalized_params)
+                else:
+                    return {"success": False, "error": f"Unknown action: {action_name}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
     

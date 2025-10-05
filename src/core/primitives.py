@@ -18,6 +18,13 @@ class PrimitiveTools:
         Agent's primary way to gather information
         resolution: 0.0 = basic info, 1.0 = maximum detail (costs more tokens)
         """
+        # Track observations per entity for diminishing returns
+        if not hasattr(self, '_observation_count'):
+            self._observation_count = {}
+        
+        self._observation_count[entity_id] = self._observation_count.get(entity_id, 0) + 1
+        count = self._observation_count[entity_id]
+        
         resolution = max(0.0, min(1.0, resolution))
         entity = self.game_state.get_entity(entity_id)
         
@@ -34,6 +41,12 @@ class PrimitiveTools:
         else:
             # Full detail (expensive)
             result = entity.copy()
+        
+        # Add diminishing returns signal
+        if count > 2:
+            result['note'] = f"You've observed this {count} times. Little new information gained."
+        elif count > 1:
+            result['note'] = "Familiar entity - minimal new information."
             
         return {"success": True, "observations": result, "resolution_used": resolution}
         
