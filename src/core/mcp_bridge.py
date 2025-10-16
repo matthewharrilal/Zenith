@@ -33,17 +33,6 @@ class MCPOpenAIBridge:
         self._last_request_time = time.time()
         
         
-        # Add diversity hint based on usage, not tool names
-        diversity_hint = self._get_diversity_hint()
-        if diversity_hint:
-            # Add as user message for more impact
-            if messages and messages[-1]["role"] == "user":
-                messages[-1]["content"] += f"\n\nIMPORTANT: {diversity_hint}"
-            else:
-                messages.append({
-                    "role": "user", 
-                    "content": f"IMPORTANT: {diversity_hint}"
-                })
         
         try:
             response = self.client.chat.completions.create(
@@ -87,147 +76,137 @@ class MCPOpenAIBridge:
                 max_tokens=max_tokens
             )
             
-            # Return the first tool call info and final response
-            first_tool_call = message.tool_calls[0]
-            first_arguments = json.loads(first_tool_call.function.arguments)
-            
-            # Track successful tool usage
-            tool_name = first_tool_call.function.name
-            self._tool_usage_count[tool_name] = self._tool_usage_count.get(tool_name, 0) + 1
+            # Return all tool calls and final response
+            all_tool_calls = []
+            for tool_call in message.tool_calls:
+                tool_name = tool_call.function.name
+                tool_args = json.loads(tool_call.function.arguments)
+                all_tool_calls.append((tool_name, tool_args))
+                
+                # Track successful tool usage
+                self._tool_usage_count[tool_name] = self._tool_usage_count.get(tool_name, 0) + 1
             
             final_content = final.choices[0].message.content
             if final_content is None:
                 final_content = "No response generated"
             
+            # Enhanced reasoning: combine tool call reasoning with final response
+            enhanced_reasoning = self._build_enhanced_reasoning(message, final_content, all_tool_calls)
+            
             return (
-                first_tool_call.function.name,
-                first_arguments,
-                final_content
+                all_tool_calls,  # Return list of (tool_name, args) tuples
+                enhanced_reasoning
             )
         
         content = message.content
         if content is None:
             content = "No response generated"
         
-        # FORCE ACTION: If no tool calls were made, force a default action
-        # This prevents analysis paralysis by ensuring agents always act
+        # If no tool calls were made, force a default action
         print(f"⚠️  No tool calls made, forcing default action")
         
-        # Use diversity-aware fallback
-        forced_action, forced_params = self._get_diversity_fallback()
+        # Simple fallback
+        forced_action = "observe"
+        forced_params = {"entity_id": "environment", "resolution": 0.5}
         self._tool_usage_count[forced_action] = self._tool_usage_count.get(forced_action, 0) + 1
         
-        return forced_action, forced_params, content
+        return [(forced_action, forced_params)], content
     
-    def _get_diversity_hint(self) -> Optional[str]:
-        """Frame diversity as necessary, not optional"""
-        import random
+    def _build_enhanced_reasoning(self, message, final_content: str, tool_calls: List) -> str:
+        """Build detailed reasoning that explains the 'why' behind decisions"""
         
-        if not self._tool_usage_count:
-            return "EXPLORE: Each tool reveals different information. Observation shows what IS, communication reveals intentions, memory shows patterns, detection finds relationships."
+        reasoning_parts = []
         
-        # Check for observe dominance specifically
-        observe_count = self._tool_usage_count.get('observe', 0)
-        total = sum(self._tool_usage_count.values())
+        # Extract meaningful reasoning from final content
+        if final_content and final_content.strip() and final_content != "No response generated":
+            lines = final_content.split('\n')
+            meaningful_lines = []
+            for line in lines:
+                line = line.strip()
+                if (line and 
+                    not line.startswith('**') and 
+                    not line.startswith('-') and 
+                    not line.startswith('PLAN:') and 
+                    not line.startswith('CHOOSE:') and 
+                    not line.startswith('ACT:') and 
+                    not line.startswith('REFLECT:') and
+                    len(line) > 30):
+                    meaningful_lines.append(line)
+            
+            if meaningful_lines:
+                # Return up to 3 meaningful lines for context
+                reasoning_parts.extend(meaningful_lines[:3])
         
-        if observe_count > 0 and observe_count == total:
-            return "EXPLORE: Pure observation is passive. Try communication (signal/receive), memory queries, or pattern detection to understand WHY and HOW."
+        # If no meaningful content, explain tool purposes with context
+        if not reasoning_parts and tool_calls:
+            for tool_name, tool_args in tool_calls:
+                purpose = self._explain_tool_purpose(tool_name, tool_args)
+                reasoning_parts.append(purpose)
         
-        if observe_count > total * 0.5:
-            return "EXPLORE: Watching without engaging limits understanding. Communication reveals intentions, memory shows patterns, detection finds relationships."
+        # Fallback
+        if not reasoning_parts:
+            reasoning_parts.append("Taking action based on current situation and available information.")
         
-        # Check for communication dominance
-        comm_count = self._tool_usage_count.get('signal', 0) + self._tool_usage_count.get('receive', 0)
-        if comm_count > total * 0.6:
-            return "EXPLORE: Communication is good, but try observation to see current state, memory queries to learn from past, or pattern detection to find hidden connections."
-        
-        # General diversity push
-        unique = len(self._tool_usage_count)
-        if unique < 3:
-            return "EXPLORE: Limited approaches create blind spots. Try different tools - each reveals different aspects of reality."
-        
-        # Encourage deeper exploration
-        if unique >= 4:
-            return "DEEPEN: You're using diverse tools. Now try combining them - query memory about past observations, signal about discovered patterns, or detect relationships between different entities."
-        
-        return None
+        return "\n".join(reasoning_parts)
     
-    def _get_forced_rotation_tool(self) -> Optional[str]:
-        """Force rotation when stuck on one tool"""
-        if not self._tool_usage_count:
-            return None
+    def _explain_tool_purpose(self, tool_name: str, tool_args: Dict) -> str:
+        """Explain the purpose of a tool call based on its name and arguments"""
         
-        # Get the overused tool
-        overused_tool = max(self._tool_usage_count, key=self._tool_usage_count.get)
+        if tool_name == "observe":
+            entity = tool_args.get("entity_id", "unknown")
+            resolution = tool_args.get("resolution", 0)
+            return f"Gathering information about {entity} (detail level: {resolution})"
         
-        # Rotation sequence - different from overused
-        rotation_sequence = ["signal", "receive", "query", "modify", "connect", "detect", "store", "compute", "transfer", "observe"]
+        elif tool_name == "signal":
+            message = tool_args.get("message", "")
+            target = tool_args.get("target", "all")
+            intensity = tool_args.get("intensity", 1)
+            return f"Communicating to {target} (priority {intensity}): '{message}'"
         
-        # Find next tool in sequence
-        try:
-            current_index = rotation_sequence.index(overused_tool)
-            next_tool = rotation_sequence[(current_index + 1) % len(rotation_sequence)]
-            return next_tool
-        except ValueError:
-            # If overused tool not in sequence, return first non-overused
-            for tool in rotation_sequence:
-                if tool != overused_tool:
-                    return tool
-            return None
-    
-    def _get_diversity_fallback(self) -> Tuple[str, Dict[str, Any]]:
-        """Get diversity-aware fallback action with philosophical variety"""
-        import random
+        elif tool_name == "query":
+            memory_type = tool_args.get("memory_type", "events")
+            search_term = tool_args.get("search_term", "general")
+            return f"Searching {memory_type} memory for: {search_term}"
         
-        if not self._tool_usage_count:
-            return "signal", {"message": "Hello, exploring communication", "intensity": 5, "target": "all"}
+        elif tool_name == "transfer":
+            prop = tool_args.get("property_name", "unknown")
+            from_ent = tool_args.get("from_entity", "unknown")
+            to_ent = tool_args.get("to_entity", "unknown")
+            amount = tool_args.get("amount", "1")
+            return f"Transferring {prop} from {from_ent} to {to_ent} (amount: {amount})"
         
-        # Find least used tool
-        min_usage = min(self._tool_usage_count.values())
-        least_used = [tool for tool, count in self._tool_usage_count.items() if count == min_usage]
+        elif tool_name == "connect":
+            entity_a = tool_args.get("entity_a", "unknown")
+            entity_b = tool_args.get("entity_b", "unknown")
+            strength = tool_args.get("strength", 0)
+            return f"Building relationship between {entity_a} and {entity_b} (strength: {strength})"
         
-        # If only one tool used, force a different one
-        if len(self._tool_usage_count) == 1:
-            if "observe" in self._tool_usage_count:
-                return "signal", {"message": "Exploring communication", "intensity": 5, "target": "all"}
-            elif "signal" in self._tool_usage_count:
-                return "receive", {"filter_criteria": {}, "time_window": 10.0}
-            elif "receive" in self._tool_usage_count:
-                return "query", {"memory_type": "events", "search_term": "exploration"}
-            else:
-                return "observe", {"entity_id": "environment", "resolution": 0.5}
+        elif tool_name == "detect":
+            entities = tool_args.get("entity_set", [])
+            pattern_type = tool_args.get("pattern_type", "unknown")
+            return f"Analyzing {entities} for {pattern_type} patterns"
         
-        # Rotate through least used tools with some randomness
-        available_tools = ["signal", "receive", "query", "observe", "modify", "connect", "detect", "store", "compute", "transfer"]
-        unused_tools = [tool for tool in available_tools if tool not in self._tool_usage_count]
+        elif tool_name == "receive":
+            time_window = tool_args.get("time_window", 0)
+            filters = tool_args.get("filter_criteria", {})
+            return f"Listening for signals (last {time_window}s, filters: {filters})"
         
-        if unused_tools:
-            # Prefer completely unused tools
-            tool = random.choice(unused_tools)
+        elif tool_name == "store":
+            knowledge = tool_args.get("knowledge", "")
+            confidence = tool_args.get("confidence", 0)
+            return f"Saving insight to memory (confidence {confidence}): '{knowledge}'"
+        
+        elif tool_name == "compute":
+            operation = tool_args.get("operation", "unknown")
+            inputs = tool_args.get("inputs", [])
+            return f"Processing {len(inputs)} inputs using {operation}"
+        
+        elif tool_name == "modify":
+            entity = tool_args.get("entity_id", "unknown")
+            property_name = tool_args.get("property_name", "unknown")
+            operation = tool_args.get("operation", "unknown")
+            return f"Modifying {entity}.{property_name} using {operation}"
+        
         else:
-            # Use least used
-            tool = random.choice(least_used)
-        
-        # Generate appropriate parameters
-        if tool == "signal":
-            return "signal", {"message": "Exploring communication", "intensity": 5, "target": "all"}
-        elif tool == "receive":
-            return "receive", {"filter_criteria": {}, "time_window": 10.0}
-        elif tool == "query":
-            return "query", {"memory_type": "events", "search_term": "exploration"}
-        elif tool == "observe":
-            return "observe", {"entity_id": "environment", "resolution": 0.5}
-        elif tool == "modify":
-            return "modify", {"entity_id": "environment", "changes": {"exploration": True}}
-        elif tool == "connect":
-            return "connect", {"target_entity": "environment", "connection_type": "exploration"}
-        elif tool == "detect":
-            return "detect", {"detection_type": "exploration", "range": 10.0}
-        elif tool == "store":
-            return "store", {"data": {"exploration": True}, "location": "memory"}
-        elif tool == "compute":
-            return "compute", {"operation": "exploration", "inputs": ["environment"]}
-        elif tool == "transfer":
-            return "transfer", {"source": "environment", "target": "memory", "data": {"exploration": True}}
-        else:
-            return "signal", {"message": "Exploring communication", "intensity": 5, "target": "all"}
+            return f"Executing {tool_name} with parameters: {tool_args}"
+    

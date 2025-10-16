@@ -32,6 +32,7 @@ class Agent:
         if os.getenv('DEBUG_MCP', '').lower() in ['true', '1', 'yes']:
             print(f"[{self.name}] MCP system initialized")
         
+        
         # MCP-only prompt
         self.system_prompt = self._build_system_prompt()
         
@@ -45,12 +46,19 @@ CORE PRINCIPLE:
 Tools work best in combination. Single actions reveal fragments; sequences reveal systems. Social patterns emerge from multi-step interactions.
 
 DECISION FRAMEWORK:
-Each turn, follow this compact structure:
+Each turn, follow this structure:
 
 PLAN: List 2-3 candidate tool sequences (bullets, no explanation)
-CHOOSE: Select one sequence and justify in 1-2 sentences based on expected information gain or social impact
+CHOOSE: Select one sequence and justify in 2-3 sentences based on expected information gain or social impact
 ACT: Execute the chosen tool(s) with minimal necessary parameters
-REFLECT: State what was learned and next hypothesis (1-2 sentences)
+REFLECT: State what was learned and next hypothesis (2-3 sentences)
+
+REASONING REQUIREMENTS:
+- Always explain WHY you're taking each action
+- Describe what information you're seeking or what you hope to achieve
+- Connect your actions to your overall strategy and goals
+- Explain how this action builds on previous actions or information
+- State what you expect to learn or accomplish
 
 TOOL SYNERGIES:
 - Information flows: observe → detect → signal (discover patterns → coordinate)
@@ -79,12 +87,12 @@ Remember: Agents remember your patterns. Repetition signals predictability. Vari
 Respond to agent actions appropriately and maintain narrative consistency."""
 
 
-    def get_action(self, game_state: GameState, memory: Memory, primitives: PrimitiveTools) -> Tuple[str, Dict[str, Any], str]:
-        """Get agent action using MCP system"""
+    def get_action(self, game_state: GameState, memory: Memory, primitives: PrimitiveTools) -> Tuple[List[Tuple[str, Dict[str, Any]]], str]:
+        """Get agent action using MCP system - returns all tool calls and reasoning"""
         return self._get_action_mcp(game_state, memory)
     
-    def _get_action_mcp(self, game_state: GameState, memory: Memory) -> Tuple[str, Dict[str, Any], str]:
-        """Get action using MCP system instead of text parsing"""
+    def _get_action_mcp(self, game_state: GameState, memory: Memory) -> Tuple[List[Tuple[str, Dict[str, Any]]], str]:
+        """Get action using MCP system - returns all tool calls and reasoning"""
         
         # Bind context
         self.mcp_server.bind_context(game_state, memory, self.name)
@@ -107,103 +115,116 @@ Respond to agent actions appropriately and maintain narrative consistency."""
         
         # Check for test mode
         if os.getenv('TEST_MODE', '').lower() in ['true', '1', 'yes']:
-            action_type, action_params, reasoning = "signal", {"message": "Test communication", "intensity": 5, "target": "all"}, "Test mode action"
+            tool_calls = [("signal", {"message": "Test communication", "intensity": 5, "target": "all"})]
+            reasoning = "Test mode action"
         else:
             # Get action through MCP
             try:
-                action_type, action_params, reasoning = self.mcp_bridge.chat_with_tools(
+                tool_calls, reasoning = self.mcp_bridge.chat_with_tools(
                     messages,
                     temperature=0.7,
                     max_tokens=500
                 )
             except Exception as e:
-                action_type, action_params, reasoning = "observe", {"entity_id": "environment", "resolution": 0.5}, f"Fallback due to error: {e}"
+                tool_calls = [("observe", {"entity_id": "environment", "resolution": 0.5})]
+                reasoning = f"Fallback due to error: {e}"
         
-        # Track action for observation penalty
-        self._action_history.append(action_type)
-        if len(self._action_history) > 10:  # Keep only recent 10 actions
-            self._action_history.pop(0)
+        # Track all actions for observation penalty
+        for action_type, _ in tool_calls:
+            self._action_history.append(action_type)
+            if len(self._action_history) > 10:  # Keep only recent 10 actions
+                self._action_history.pop(0)
+            
+            # Mark tool usage for context hints
+            if action_type == "query":
+                self._has_queried = True
+            elif action_type == "receive":
+                self._has_received = True
+            elif action_type == "detect":
+                self._has_detected = True
+            elif action_type == "signal":
+                self._has_signaled = True
         
-        # Mark tool usage for context hints
-        if action_type == "query":
-            self._has_queried = True
-        elif action_type == "receive":
-            self._has_received = True
-        elif action_type == "detect":
-            self._has_detected = True
-        elif action_type == "signal":
-            self._has_signaled = True
-        
-        return action_type, action_params, reasoning
+        return tool_calls, reasoning
     
     
     def _build_context(self, game_state: GameState, memory: Memory) -> str:
-        """Build context following the USER_TEMPLATE layout"""
+        """Build enhanced context for agent decision making"""
         
-        # Time and basics
+        # Basic info
         timestamp = f"{game_state.timestamp:.0f}"
         my_state = game_state.get_entity(self.name) or {}
-        resources_list = my_state.get("resources", [])
-        resources_str = ", ".join(resources_list) if isinstance(resources_list, list) and resources_list else "none"
-        health = my_state.get("health")
-        if health is None:
-            # Fallback to inverse stress if health not tracked
-            stress = float(my_state.get("stress_level", 0.0))
-            health = max(0.0, min(1.0, 1.0 - stress))
-        health_str = f"{health:.2f}" if isinstance(health, (int, float)) else str(health)
-
-        # Other agents and recent actions (from memory)
+        
+        # Other agents with their states
         others = [k for k in game_state.get_all_agent_entities() if k != self.name]
-        agent_list = ", ".join(others) if others else "none"
-        recent_events = memory.events[-3:] if hasattr(memory, "events") else []
-        recent_actions = ", ".join([e.get("action", "?") for e in recent_events]) if recent_events else "none"
-
-        # Recent signals (last 3)
+        agent_states = []
+        for agent_name in others:
+            agent_state = game_state.get_entity(agent_name) or {}
+            status = agent_state.get("status", "unknown")
+            goal = agent_state.get("goal", "unknown")
+            agent_states.append(f"{agent_name}({status},{goal})")
+        agent_list = ", ".join(agent_states) if agent_states else "none"
+        
+        # Recent signals with more detail
         recent_signals = game_state.get_recent_signals(time_window=20.0) or []
-        last_3 = recent_signals[-3:]
-        last_3_signals = "; ".join([f"{s.get('sender','?')}: {s.get('message','')}" for s in last_3]) if last_3 else "none"
+        last_5 = recent_signals[-5:]
+        signal_details = []
+        for s in last_5:
+            sender = s.get('sender', '?')
+            message = s.get('message', '')
+            intensity = s.get('intensity', 0)
+            target = s.get('target', 'all')
+            signal_details.append(f"{sender}→{target}[{intensity}]: {message[:50]}{'...' if len(message) > 50 else ''}")
+        recent_signals_str = "; ".join(signal_details) if signal_details else "none"
 
-        # Environmental state summary
+        # Environmental state with more detail
         env = game_state.get_entity("environment") or {}
-        threat = env.get("threat_level")
+        threat = env.get("threat_level", 0)
         threat_str = f"threat={threat:.1%}" if isinstance(threat, (int, float)) else "threat=unknown"
-        exit_door = game_state.get_entity("exit_door") or {}
-        barrier = exit_door.get("barrier_strength")
-        barrier_str = f"barrier={barrier}/100" if isinstance(barrier, (int, float)) else "barrier=unknown"
-        env_summary = f"{threat_str}, {barrier_str}"
+        
+        # Recent events from memory
+        recent_events = []
+        if hasattr(memory, 'events') and memory.events:
+            for event in memory.events[-3:]:
+                actor = event.get('actor', '?')
+                action = event.get('action', '?')
+                recent_events.append(f"{actor}:{action}")
+        recent_events_str = ", ".join(recent_events) if recent_events else "none"
 
-        # Information gaps (derive from simple heuristics)
-        gaps: List[str] = []
-        if not getattr(self, "_has_queried", False) and len(getattr(memory, "events", [])) > 0:
-            gaps.append("memory patterns unqueried")
-        if not getattr(self, "_has_detected", False) and len(getattr(memory, "events", [])) > 3:
-            gaps.append("hidden relationships undetected")
-        if others and not getattr(self, "_has_signaled", False) and not recent_signals:
-            gaps.append("other agents' intentions unknown")
-        if not gaps:
-            gaps.append("none identified")
-        unexplored_aspects = ", ".join(gaps)
-
-        # Exploration focus (underused tool hint)
-        if not getattr(self, "_has_detected", False) and len(getattr(memory, "events", [])) > 3:
-            underused_tool_hint = "consider detect after observe to reveal patterns"
-        elif others and not getattr(self, "_has_signaled", False):
-            underused_tool_hint = "consider signal → receive loop to probe intentions"
-        elif not getattr(self, "_has_queried", False) and len(getattr(memory, "events", [])) > 0:
-            underused_tool_hint = "consider query to leverage prior experiences"
-        else:
-            underused_tool_hint = "use the smallest sequence that maximizes information gain"
-
-        # Assemble template
-        lines: List[str] = []
-        lines.append(f"Time: {timestamp} | Resources: {resources_str} | Health: {health_str}")
-        lines.append(f"Other agents: {agent_list} [{recent_actions}]")
-        lines.append(f"Recent signals: {last_3_signals}")
-        lines.append(f"Environmental state: {env_summary}")
-        lines.append(f"Information gaps: {unexplored_aspects}")
-        lines.append("")
-        lines.append(f"Exploration focus: {underused_tool_hint}")
+        # Build enhanced context
+        lines = []
+        lines.append(f"⏰ Time: {timestamp}s")
+        lines.append(f"👥 Other agents: {agent_list}")
+        lines.append(f"📡 Recent signals: {recent_signals_str}")
+        lines.append(f"🌍 Environment: {threat_str}")
+        lines.append(f"📋 Recent events: {recent_events_str}")
+        
+        # Add escape goal context with more detail
+        if my_state.get("goal") == "escape_safehouse":
+            lines.append("")
+            lines.append("🎯 PRIMARY GOAL: ESCAPE the safehouse!")
+            lines.append("🤝 STRATEGY: Work with other agents to coordinate escape")
+            lines.append("🚪 EXIT OPTIONS:")
+            
+            # Check exit statuses
+            exits = ["front_door", "back_door", "window"]
+            for exit_name in exits:
+                exit_entity = game_state.get_entity(exit_name)
+                if exit_entity:
+                    status = exit_entity.get("status", "unknown")
+                    difficulty = exit_entity.get("difficulty", "unknown")
+                    lines.append(f"   • {exit_name}: {status} (difficulty: {difficulty})")
+        
+        # Add my current state
+        if my_state:
+            lines.append("")
+            lines.append("📊 MY STATUS:")
+            for key, value in my_state.items():
+                if key not in ["relationships"]:  # Skip complex data
+                    lines.append(f"   • {key}: {value}")
+        
         return "\n".join(lines)
+    
     
     def _call_gpt(self, prompt: str) -> str:
         """Make GPT API call with error handling"""

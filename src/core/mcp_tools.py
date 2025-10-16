@@ -276,7 +276,7 @@ class MCPToolServer:
                         "required": ["inputs", "operation"]
                     }
                 }
-            }
+            },
         ]
     
     def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:

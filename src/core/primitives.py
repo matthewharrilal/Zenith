@@ -2,7 +2,7 @@
 PrimitiveTools - The Heart of Emergence
 10 core functions that agents use to interact with the world
 """
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Tuple, Union
 import random
 from .game_state import GameState
 from .memory import Memory
@@ -300,3 +300,4 @@ class PrimitiveTools:
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+    

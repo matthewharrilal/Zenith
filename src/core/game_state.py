@@ -12,6 +12,11 @@ class GameState:
         self.entities: Dict[str, Dict[str, Any]] = {}
         self.signals: List[Dict[str, Any]] = []  # Active communications
         self.metadata: Dict[str, Any] = {}       # Game-specific data
+        self.social_dynamics: Dict[str, Any] = {
+            "cooperation_pressure": 0.0,  # Pressure to cooperate
+            "isolation_penalty": 0.0,     # Penalty for being isolated
+            "communication_rewards": 0.0 # Rewards for communication
+        }
         
     def add_entity(self, entity_id: str, properties: Dict[str, Any]):
         """Add new entity to world - can be agent, object, location, concept"""
@@ -61,18 +66,40 @@ class GameState:
         agents = {}
         for entity_id, properties in self.entities.items():
             # Heuristic: entities with 'role' or typical agent properties
+            # Also include entities that start with 'AGENT_' (our current naming)
             if ('role' in properties or 
                 'stress_level' in properties or 
                 'resources' in properties or
+                entity_id.startswith('AGENT_') or
                 entity_id in ['RAVEN', 'FALCON', 'VIPER', 'DM']):
                 agents[entity_id] = properties
         return agents
         
+    def update_social_dynamics(self, agent_name: str, action: str, memory):
+        """Update social dynamics based on agent actions"""
+        # Increase cooperation pressure over time (faster buildup)
+        self.social_dynamics["cooperation_pressure"] += 0.02
+        
+        # Calculate isolation penalty based on recent communication
+        recent_events = memory.events[-5:] if hasattr(memory, 'events') else []
+        communication_actions = ['signal', 'receive', 'connect', 'transfer']
+        recent_communication = sum(1 for e in recent_events if e.get('action') in communication_actions)
+        
+        if recent_communication == 0:
+            self.social_dynamics["isolation_penalty"] += 0.05  # Faster isolation penalty
+        else:
+            self.social_dynamics["isolation_penalty"] = max(0, self.social_dynamics["isolation_penalty"] - 0.02)
+        
+        # Reward communication (higher rewards)
+        if action in communication_actions:
+            self.social_dynamics["communication_rewards"] += 0.1
+    
     def to_dict(self) -> Dict[str, Any]:
         """Serialize for debugging/analysis"""
         return {
             'timestamp': self.timestamp,
             'entities': self.entities,
             'signal_count': len(self.signals),
-            'metadata': self.metadata
+            'metadata': self.metadata,
+            'social_dynamics': self.social_dynamics
         }
