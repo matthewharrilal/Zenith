@@ -2,7 +2,7 @@
 Agent System - Decision Making with GPT Integration
 Simple but effective agent classes that use primitive tools
 """
-from typing import Dict, Any, Tuple, List, Union
+from typing import Dict, Any, Tuple, List, Union, Optional
 import os
 import openai
 import asyncio
@@ -71,6 +71,33 @@ Each turn, execute this sequence:
    - After acting, ask: "Am I closer to completing my goal than before?"
    - If YES: Continue to next turn
    - If NO: Try a different approach (do NOT repeat the same failed action)
+
+MEMORY ORGANIZATION:
+
+Your memory is organized by type for efficient retrieval:
+
+📋 PERCEPTION - What you've observed
+  • Observations about entities and environment
+  • Query: query("perception", "entity X")
+  
+📋 ACTION - What you've attempted
+  • Modifications, communications, connections you've made
+  • Query: query("action", "what I tried")
+  
+📋 OUTCOME - Results of actions
+  • Success/failure patterns from your attempts
+  • Query: query("outcome", "successful attempts")
+  
+📋 LEARNING - Insights you've discovered
+  • Patterns, strategies, entity capabilities you've learned
+  • Query: query("learning", "strategies")
+  
+📋 HYPOTHESIS - Theories you're testing
+  • Predictions about how things work
+  • Query: query("hypothesis", "theories")
+
+Use typed queries to find specific information quickly.
+If uncertain which type, use query("all", "search term") to search everything.
 
 TOOL CATEGORIES:
 
@@ -244,6 +271,11 @@ Respond to agent actions appropriately and maintain narrative consistency."""
         lines.append(f"🌍 Environment: {threat_str}")
         lines.append(f"📋 Recent events: {recent_events_str}")
         
+        # Add typed memory context
+        typed_memory = self._build_typed_memory_context(memory)
+        lines.append("")
+        lines.append(typed_memory)
+        
         # Add escape goal context with more detail
         if my_state.get("goal") == "escape_safehouse":
             lines.append("")
@@ -269,6 +301,104 @@ Respond to agent actions appropriately and maintain narrative consistency."""
                     lines.append(f"   • {key}: {value}")
         
         return "\n".join(lines)
+    
+    def _build_typed_memory_context(self, memory: Memory, max_per_type: int = 3) -> str:
+        """
+        Build context showing typed memory sections.
+        
+        DESIGN: Show recent events per type, learnings/hypotheses persist.
+        EXTENSIBLE: Future milestone 1.3 can prioritize critical events.
+        SIMPLE: Just format events, no complex logic.
+        """
+        sections = []
+        
+        # Helper to format events (DRY)
+        def format_event_list(events: List[Dict], icon: str, title: str) -> Optional[str]:
+            if not events:
+                return None
+            
+            lines = [f"{icon} {title}:"]
+            for event in events[-max_per_type:]:  # Show most recent
+                line = self._format_event_line(event)
+                if line:
+                    lines.append(f"  {line}")
+            
+            return "\n".join(lines) if len(lines) > 1 else None
+        
+        # Perceptions
+        section = format_event_list(memory.perceptions, "🔍", "Recent Perceptions")
+        if section:
+            sections.append(section)
+        
+        # Actions
+        section = format_event_list(memory.actions, "⚡", "Recent Actions")
+        if section:
+            sections.append(section)
+        
+        # Outcomes
+        section = format_event_list(memory.outcomes, "✅", "Recent Outcomes")
+        if section:
+            sections.append(section)
+        
+        # Learnings (persistent, not just recent)
+        if memory.learnings:
+            lines = ["💡 Key Learnings:"]
+            for event in memory.learnings[-max_per_type:]:
+                insight = event.get("pattern") or event.get("insight", "")
+                confidence = event.get("confidence", 0.0)
+                if insight:
+                    lines.append(f"  • {insight} [confidence: {confidence:.1f}]")
+            
+            if len(lines) > 1:
+                sections.append("\n".join(lines))
+        
+        # Hypotheses (persistent)
+        if memory.hypotheses:
+            lines = ["🤔 Active Hypotheses:"]
+            for event in memory.hypotheses[-max_per_type:]:
+                hypothesis = event.get("hypothesis", "")
+                confidence = event.get("confidence", 0.0)
+                if hypothesis:
+                    lines.append(f"  • {hypothesis} [confidence: {confidence:.1f}]")
+            
+            if len(lines) > 1:
+                sections.append("\n".join(lines))
+        
+        if not sections:
+            return "📋 Memory: (no events yet)\n"
+        
+        return "📋 MEMORY:\n\n" + "\n\n".join(sections) + "\n"
+
+    def _format_event_line(self, event: Dict) -> Optional[str]:
+        """
+        Format single event for context display.
+        
+        SIMPLE: Extract key info, truncate if needed.
+        """
+        actor = event.get("actor", "?")
+        action = event.get("action", event.get("type", "?"))
+        
+        # Type-specific formatting
+        if event.get("type") == Memory.OUTCOME:
+            success = "✓" if event.get("success") else "✗"
+            action_type = event.get("action_type", "?")
+            error = event.get("error", "")
+            return f"{actor}'s {action_type}: {success} {error}".strip()
+        
+        elif event.get("type") == Memory.PERCEPTION:
+            target = event.get("params", {}).get("entity_id", "?")
+            result = event.get("result", {})
+            # Truncate result for display
+            result_str = str(result)[:50]
+            return f"{actor} observed {target}: {result_str}"
+        
+        elif event.get("type") == Memory.ACTION:
+            params = event.get("params", {})
+            target = params.get("entity_id") or params.get("target", "")
+            return f"{actor} {action} {target}".strip()
+        
+        else:
+            return f"{actor} {action}"
     
     
     def _call_gpt(self, prompt: str) -> str:

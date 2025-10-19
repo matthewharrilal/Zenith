@@ -23,23 +23,35 @@ class MCPToolServer:
         self.primitives = PrimitiveTools(game_state, memory)
         
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        """Return OpenAI function schemas for all 10 primitive tools"""
+        """
+        Return OpenAI function schemas for all 10 primitive tools.
+        
+        DESIGN: Descriptions are scenario-agnostic abstractions.
+        - NO scenario-specific examples (no "escape routes")
+        - YES universal patterns (entities, patterns, strategies)
+        - CLEAR purpose and usage guidance
+        """
         return [
             {
                 "type": "function",
                 "function": {
                     "name": "observe",
-                    "description": "Gather information about entities WHEN NEEDED to identify blockers. Use once per entity, then act on what you learned. Avoid repeated observations of same entity.",
+                    "description": (
+                        "Gather information about entities to identify blockers or opportunities. "
+                        "Use when you need to understand current state before acting. "
+                        "Each observation provides detail based on resolution level. "
+                        "Avoid repeated observations of same entity - observe once then act."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "entity_id": {
                                 "type": "string",
-                                "description": "ID of entity to observe (e.g., 'environment', 'RAVEN', 'door_1')"
+                                "description": "ID of entity to observe (agents, objects, environment)"
                             },
                             "resolution": {
                                 "type": "number",
-                                "description": "Detail level: 0.0=basic, 1.0=maximum detail",
+                                "description": "Detail level: 0.0=basic, 1.0=maximum (higher detail costs more tokens)",
                                 "minimum": 0.0,
                                 "maximum": 1.0
                             }
@@ -52,23 +64,27 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "signal",
-                    "description": "Send communication to coordinate with other agents WHEN YOU NEED HELP. Use to unblock yourself, not to build consensus. Signal your action, don't endlessly discuss.",
+                    "description": (
+                        "Send communication to coordinate with other agents when you need help or want to share information. "
+                        "Use to unblock yourself or inform others of your actions. "
+                        "Signal your intent once, then act - avoid endless discussion."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "message": {
                                 "type": "string",
-                                "description": "Message content to broadcast"
+                                "description": "Information to communicate"
                             },
                             "intensity": {
                                 "type": "integer",
-                                "description": "Priority level 1-10",
+                                "description": "Priority/urgency level (1=low, 10=critical)",
                                 "minimum": 1,
                                 "maximum": 10
                             },
                             "target": {
                                 "type": "string",
-                                "description": "Target: 'all', specific agent name, or custom group"
+                                "description": "Recipients: 'all' for broadcast, or specific agent name"
                             }
                         },
                         "required": ["message", "intensity", "target"]
@@ -79,18 +95,23 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "query",
-                    "description": "Search memory for valuable information about current situation",
+                    "description": (
+                        "Search memory by type to find specific information. "
+                        "Memory types: 'perception' (observations), 'action' (what you tried), "
+                        "'outcome' (results), 'learning' (insights), 'hypothesis' (theories). "
+                        "Use typed queries to find relevant information quickly."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "memory_type": {
                                 "type": "string",
-                                "description": "Type of memory: 'events', 'patterns', 'relationships'",
-                                "enum": ["events", "patterns", "relationships"]
+                                "description": "Type of memory to search",
+                                "enum": ["perception", "action", "outcome", "learning", "hypothesis", "all"]
                             },
                             "search_term": {
                                 "type": "string",
-                                "description": "What to search for in memory"
+                                "description": "What to search for"
                             }
                         },
                         "required": ["memory_type", "search_term"]
@@ -101,13 +122,17 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "transfer",
-                    "description": "Move resources, information, or trust between entities",
+                    "description": (
+                        "Move resources, information, or properties between entities. "
+                        "Use when entities need to exchange capabilities or knowledge. "
+                        "Supports numerical values, lists, and string properties."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "property_name": {
                                 "type": "string",
-                                "description": "What to transfer: 'resources', 'information', 'trust', etc."
+                                "description": "What to transfer (resources, information, capabilities)"
                             },
                             "from_entity": {
                                 "type": "string",
@@ -115,11 +140,11 @@ class MCPToolServer:
                             },
                             "to_entity": {
                                 "type": "string",
-                                "description": "Target entity ID"
+                                "description": "Destination entity ID"
                             },
                             "amount": {
                                 "type": "string",
-                                "description": "Amount to transfer (number or 'all')"
+                                "description": "Quantity to transfer (number or 'all')"
                             }
                         },
                         "required": ["property_name", "from_entity", "to_entity", "amount"]
@@ -130,13 +155,18 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "modify",
-                    "description": "Change entity properties to make progress toward goals. Examples: modify(agent_name, 'location', 'set', 'outside') to move yourself, modify('door', 'status', 'set', 'open') to open door. Safe for self-modification.",
+                    "description": (
+                        "Change entity properties to make progress toward goals. "
+                        "Use to update state, overcome blockers, or complete objectives. "
+                        "Operations: 'set' (replace), 'add' (increment), 'multiply' (scale), 'append' (add to list). "
+                        "Can modify yourself or other entities."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "entity_id": {
                                 "type": "string",
-                                "description": "Entity to modify. Use your agent name to modify yourself (e.g., change location), or other entity IDs to modify environment"
+                                "description": "Entity to modify (your agent name, objects, environment)"
                             },
                             "property_name": {
                                 "type": "string",
@@ -144,7 +174,7 @@ class MCPToolServer:
                             },
                             "operation": {
                                 "type": "string",
-                                "description": "Operation: 'set', 'add', 'multiply', 'append'",
+                                "description": "How to change it",
                                 "enum": ["set", "add", "multiply", "append"]
                             },
                             "value": {
@@ -160,7 +190,11 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "connect",
-                    "description": "Create or modify relationships between entities",
+                    "description": (
+                        "Create or modify relationships between entities. "
+                        "Use to build trust, establish alliances, or track connections. "
+                        "Strength ranges from -1.0 (opposition) to +1.0 (strong alliance)."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -174,7 +208,7 @@ class MCPToolServer:
                             },
                             "strength": {
                                 "type": "number",
-                                "description": "Relationship strength: -1.0 to 1.0",
+                                "description": "Relationship strength (-1.0 to +1.0)",
                                 "minimum": -1.0,
                                 "maximum": 1.0
                             }
@@ -187,18 +221,24 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "detect",
-                    "description": "Discover hidden patterns and relationships - reveals non-obvious information",
+                    "description": (
+                        "Find correlations, trends, or anomalies in entity data. "
+                        "Use when you need to understand relationships between multiple entities. "
+                        "Reveals patterns that aren't obvious from individual observations. "
+                        "Pattern types: 'correlation' (commonalities), 'trend' (changes over time), "
+                        "'anomaly' (outliers), 'similarity' (comparable entities)."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "entity_set": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "List of entity IDs to analyze (use ['all'] for all entities)"
+                                "description": "Entity IDs to analyze (minimum 2 entities)"
                             },
                             "pattern_type": {
                                 "type": "string",
-                                "description": "Type of pattern to detect",
+                                "description": "Type of pattern to find",
                                 "enum": ["correlation", "trend", "anomaly", "similarity"]
                             }
                         },
@@ -210,13 +250,17 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "receive",
-                    "description": "Listen for signals - learn what others are thinking and doing",
+                    "description": (
+                        "Listen for signals from other agents. "
+                        "Use to check what others have communicated. "
+                        "Filter by sender or minimum priority to focus on relevant messages."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "filter_criteria": {
                                 "type": "object",
-                                "description": "Filters for signals (e.g., {'sender': 'RAVEN', 'min_intensity': 5})",
+                                "description": "Message filters (sender, min_intensity)",
                                 "properties": {
                                     "sender": {"type": "string"},
                                     "min_intensity": {"type": "integer"}
@@ -224,7 +268,7 @@ class MCPToolServer:
                             },
                             "time_window": {
                                 "type": "number",
-                                "description": "How far back to look for signals (seconds)"
+                                "description": "How far back to look (seconds)"
                             }
                         },
                         "required": ["filter_criteria", "time_window"]
@@ -235,17 +279,22 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "store",
-                    "description": "Save important insights to collective memory",
+                    "description": (
+                        "Save discoveries about entities, patterns, or strategies for later reference. "
+                        "Use when you learn something important about the world or other agents. "
+                        "Stored insights become learnings that persist across turns. "
+                        "Examples: discovered capabilities, effective strategies, entity relationships."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "knowledge": {
                                 "type": "string",
-                                "description": "Important insight or knowledge to remember"
+                                "description": "Insight or discovery to remember"
                             },
                             "confidence": {
                                 "type": "number",
-                                "description": "Confidence in this knowledge (0.0 to 1.0)",
+                                "description": "How certain you are (0.0=guess, 1.0=verified)",
                                 "minimum": 0.0,
                                 "maximum": 1.0
                             }
@@ -258,25 +307,31 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "compute",
-                    "description": "Process information to derive insights",
+                    "description": (
+                        "Calculate statistics or analyze patterns from numerical data. "
+                        "Use when you need to process multiple observations or measurements. "
+                        "Operations: 'sum' (total), 'average' (mean), 'correlate' (relationship strength), "
+                        "'predict' (forecast), 'analyze' (interpret patterns). "
+                        "Results become learnings for future decisions."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "inputs": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Data to process"
+                                "description": "Numerical data to process"
                             },
                             "operation": {
                                 "type": "string",
-                                "description": "Processing operation",
+                                "description": "Computation to perform",
                                 "enum": ["sum", "average", "correlate", "predict", "analyze"]
                             }
                         },
                         "required": ["inputs", "operation"]
                     }
                 }
-            },
+            }
         ]
     
     def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -285,6 +340,22 @@ class MCPToolServer:
             return {"success": False, "error": "No context bound to MCP server"}
             
         try:
+            # Handle typed query
+            if tool_name == "query":
+                memory_type = arguments.get("memory_type", "all")
+                search_term = arguments.get("search_term", "")
+                
+                if memory_type == "all":
+                    # Query all types, return dict
+                    results = {}
+                    for t in ["perception", "action", "outcome", "learning", "hypothesis"]:
+                        results[t] = self.memory.query_by_type(t, search_term)
+                    return {"success": True, "results": results}
+                else:
+                    # Query specific type
+                    results = self.memory.query_by_type(memory_type, search_term)
+                    return {"success": True, "results": results}
+            
             # Handle special cases for parameter conversion
             if tool_name == "signal":
                 # Add sender parameter

@@ -139,21 +139,33 @@ class MetaAgent:
         
         try:
             if intervention["type"] == "encourage_communication":
-                memory.add_event({
+                event = {
+                    "id": len(memory.events),
+                    "type": Memory.ACTION,
                     "actor": "META_AGENT",
                     "action": "intervention",
-                    "message": "Try more communication - signal and receive",
-                    "timestamp": game_state.timestamp
-                })
+                    "params": {"type": "encourage_communication"},
+                    "result": {"success": True, "message": "Try more communication - signal and receive"},
+                    "reasoning": "Meta-agent encouraging communication",
+                    "timestamp": f"{game_state.timestamp:.6f}",
+                    "searchable_text": "META_AGENT intervention encourage communication"
+                }
+                memory.add_event_with_auto_generation(event)
                 return True
             
             elif intervention["type"] == "facilitate_communication":
-                memory.add_event({
+                event = {
+                    "id": len(memory.events),
+                    "type": Memory.ACTION,
                     "actor": "META_AGENT",
                     "action": "intervention",
-                    "message": "Focus on building relationships - connect and transfer",
-                    "timestamp": game_state.timestamp
-                })
+                    "params": {"type": "facilitate_communication"},
+                    "result": {"success": True, "message": "Focus on building relationships - connect and transfer"},
+                    "reasoning": "Meta-agent facilitating communication",
+                    "timestamp": f"{game_state.timestamp:.6f}",
+                    "searchable_text": "META_AGENT intervention facilitate communication"
+                }
+                memory.add_event_with_auto_generation(event)
                 return True
             
             return False

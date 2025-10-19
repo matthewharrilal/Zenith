@@ -310,18 +310,25 @@ class GameEngine:
                     else:
                         print(f" → ❌ {result.get('error', 'Failed')}")
                     
-                    # Store in memory
+                    # Store in memory with auto-generation
                     normalized_params = params.copy()
                     if action_name == "query" and "search" in normalized_params and "search_term" not in normalized_params:
                         normalized_params["search_term"] = normalized_params.pop("search")
                     
-                    self.memory.add_event(
-                        actor=agent.name,
-                        action=action_name,
-                        params=normalized_params,
-                        result=result,
-                        reasoning=reasoning
-                    )
+                    # Create event with proper structure for auto-generation
+                    event = {
+                        "id": len(self.memory.events),
+                        "timestamp": f"{self.game_state.timestamp:.6f}",
+                        "actor": agent.name,
+                        "action": action_name,
+                        "params": normalized_params,
+                        "result": result,
+                        "reasoning": reasoning,
+                        "searchable_text": f"{agent.name} {action_name} {reasoning} {str(normalized_params)} {str(result)}"
+                    }
+                    
+                    # Use auto-generation to create secondary events
+                    self.memory.add_event_with_auto_generation(event)
             
             print()  # Add spacing after actions
             
