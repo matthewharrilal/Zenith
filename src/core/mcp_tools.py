@@ -29,7 +29,7 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "observe",
-                    "description": "Gather information about entities in the environment",
+                    "description": "Gather information about entities WHEN NEEDED to identify blockers. Use once per entity, then act on what you learned. Avoid repeated observations of same entity.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -52,7 +52,7 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "signal",
-                    "description": "Send communication to other agents AND learn from responses",
+                    "description": "Send communication to coordinate with other agents WHEN YOU NEED HELP. Use to unblock yourself, not to build consensus. Signal your action, don't endlessly discuss.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -130,13 +130,13 @@ class MCPToolServer:
                 "type": "function",
                 "function": {
                     "name": "modify",
-                    "description": "Change entity properties directly",
+                    "description": "Change entity properties to make progress toward goals. Examples: modify(agent_name, 'location', 'set', 'outside') to move yourself, modify('door', 'status', 'set', 'open') to open door. Safe for self-modification.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "entity_id": {
                                 "type": "string",
-                                "description": "Entity to modify"
+                                "description": "Entity to modify. Use your agent name to modify yourself (e.g., change location), or other entity IDs to modify environment"
                             },
                             "property_name": {
                                 "type": "string",
